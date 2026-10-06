@@ -1,0 +1,24 @@
+[package]
+name = "orbit-sockets-rust"
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+description = "Standalone Tokio WebSocket server option for Orbit Sockets"
+readme = "README.md"
+include = ["src/**", "tests/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE", "docs/**"]
+
+[dependencies]
+futures-util = "0.3"
+http = "1"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-tungstenite = "0.30"
+tokio-util = { version = "0.7", features = ["rt"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
