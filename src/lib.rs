@@ -34,8 +34,14 @@ use tokio_tungstenite::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// Hard upper limit for a complete text or binary message in bytes.
 pub const MAX_MESSAGE_BYTES: usize = 1_048_576;
+/// Hard upper limit for the UTF-8 close reason in bytes.
 pub const MAX_CLOSE_REASON_BYTES: usize = 123;
+const MAX_PATH_BYTES: usize = 2_048;
+const MAX_ALLOWED_ORIGINS: usize = 256;
+const MAX_SUBPROTOCOLS: usize = 64;
+const MAX_SUBPROTOCOL_BYTES: usize = 128;
 type WireStream = WebSocketStream<TcpStream>;
 type WireSink = SplitSink<WireStream, WireMessage>;
 type WireRead = SplitStream<WireStream>;
@@ -206,10 +212,15 @@ impl Default for ServerConfig {
 }
 
 impl ServerConfig {
-    /// Validate path, message, frame, connection, and shutdown bounds.
+    /// Validate routes, exact origins, token-shaped subprotocols, and resource bounds.
+    ///
+    /// Duplicate origins or subprotocols, non-origin URI components, and invalid HTTP header
+    /// tokens are rejected before the listener accepts connections.
     pub fn validate(&self) -> Result<(), SocketError> {
         if !self.path.starts_with('/')
             || self.path.contains(['?', '#'])
+            || self.path.len() > MAX_PATH_BYTES
+            || !self.path.bytes().all(|byte| (0x21..=0x7e).contains(&byte))
             || self.max_connections == 0
             || self.max_connections > 65_536
             || self.max_message_bytes == 0
@@ -221,19 +232,45 @@ impl ServerConfig {
         {
             return Err(SocketError::Protocol);
         }
+        if self.allowed_origins.len() > MAX_ALLOWED_ORIGINS
+            || self.subprotocols.len() > MAX_SUBPROTOCOLS
+        {
+            return Err(SocketError::Protocol);
+        }
+        let mut origins = std::collections::HashSet::with_capacity(self.allowed_origins.len());
         for origin in &self.allowed_origins {
             let parsed = http::Uri::try_from(origin.as_str()).map_err(|_| SocketError::Protocol)?;
+            let authority_text = origin
+                .split_once("://")
+                .map(|(_, remainder)| remainder)
+                .ok_or(SocketError::Protocol)?;
             if !matches!(parsed.scheme_str(), Some("http" | "https"))
                 || parsed.authority().is_none()
-                || parsed.path() != ""
+                || authority_text.is_empty()
+                || authority_text.contains(['/', '?', '#'])
                 || parsed.query().is_some()
                 || parsed.authority().is_some_and(|a| a.as_str().contains('@'))
+                || !origins.insert(origin)
+            {
+                return Err(SocketError::Protocol);
+            }
+        }
+        let mut protocols = std::collections::HashSet::with_capacity(self.subprotocols.len());
+        for protocol in &self.subprotocols {
+            if protocol.is_empty()
+                || protocol.len() > MAX_SUBPROTOCOL_BYTES
+                || !protocol.bytes().all(is_http_token)
+                || !protocols.insert(protocol)
             {
                 return Err(SocketError::Protocol);
             }
         }
         Ok(())
     }
+}
+
+fn is_http_token(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
 }
 
 /// One WebSocket session. Reads and writes are independently serialized and apply backpressure.

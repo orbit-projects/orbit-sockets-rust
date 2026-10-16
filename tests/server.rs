@@ -21,6 +21,29 @@ fn config_bounds_and_sensitive_debug_output() {
     assert!(Close::new(1005, "").is_err());
 }
 
+#[test]
+fn config_rejects_invalid_or_duplicate_protocols_and_origins() {
+    let mut config = ServerConfig {
+        subprotocols: vec!["orbit.v1".into(), "orbit.v1".into()],
+        ..ServerConfig::default()
+    };
+    assert_eq!(config.validate(), Err(SocketError::Protocol));
+
+    config.subprotocols = vec!["invalid protocol".into()];
+    assert_eq!(config.validate(), Err(SocketError::Protocol));
+
+    config.subprotocols = vec!["orbit.v1".into()];
+    config.allowed_origins = vec!["https://app.example.test".into()];
+    assert!(config.validate().is_ok());
+    config
+        .allowed_origins
+        .push("https://app.example.test".into());
+    assert_eq!(config.validate(), Err(SocketError::Protocol));
+
+    config.allowed_origins = vec!["https://app.example.test/path".into()];
+    assert_eq!(config.validate(), Err(SocketError::Protocol));
+}
+
 #[tokio::test]
 async fn echo_and_shutdown_are_bounded() {
     let listener = bind("127.0.0.1:0".parse::<SocketAddr>().expect("address"))
